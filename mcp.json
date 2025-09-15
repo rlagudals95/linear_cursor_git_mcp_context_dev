@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "linear-context-processor": {
+      "command": "node",
+      "args": ["dist/mcp-server.js"],
+      "env": {
+        "LINEAR_API_KEY": "${LINEAR_API_KEY}",
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}",
+        "GITHUB_OWNER": "${GITHUB_OWNER}",
+        "GITHUB_REPO": "${GITHUB_REPO}"
+      }
+    }
+  }
+}
