@@ -57,9 +57,13 @@ jobQueue.process('process-linear-issue', async (job) => {
 
     return result;
   } catch (error) {
-    logger.error('Error processing Linear issue', {
+    logger.error('💥 Error processing Linear issue', {
+      jobId: job.id,
       issueId: issue.identifier,
-      error
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      errorType: typeof error,
+      errorDetails: JSON.stringify(error, Object.getOwnPropertyNames(error))
     });
     throw error;
   }

@@ -113,13 +113,14 @@ export class GitTool {
 
   private async addFiles(files: string[]): Promise<MCPToolResult> {
     try {
-      await this.git.add(files);
+      // 타겟 리포지토리(workspace) 내부의 모든 변경사항 추가
+      await this.git.add('.');
       
-      logger.info('Added files to staging area', { files });
+      logger.info('Added all changes to staging area');
       return {
         success: true,
-        data: { files },
-        logs: [`Added ${files.length} file(s) to staging area`]
+        data: { files: ['.'] },
+        logs: ['Added all changes to staging area']
       };
     } catch (error) {
       return { success: false, error: `Failed to add files: ${error}` };

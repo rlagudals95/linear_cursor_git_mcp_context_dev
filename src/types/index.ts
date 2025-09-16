@@ -21,6 +21,30 @@ export interface LinearIssue {
   priority?: number;
   url: string;
   gitBranchName?: string;
+  comments: Array<{
+    id: string;
+    body: string;
+    createdAt: string;
+    user: {
+      name: string;
+    };
+  }>;
+  attachments: Array<{
+    id: string;
+    title: string;
+    url: string;
+    subtitle?: string;
+  }>;
+  parent?: {
+    id: string;
+    identifier: string;
+    title: string;
+  };
+  children: Array<{
+    id: string;
+    identifier: string;
+    title: string;
+  }>;
 }
 
 export interface LinearWebhookPayload {
@@ -39,7 +63,7 @@ export interface ImperativePlan {
 
 export interface ImperativeCommand {
   id: string;
-  type: 'branch.create' | 'repo.apply_patch' | 'test.run' | 'git.commit' | 'git.push' | 'github.pr.create';
+  type: 'repo.clone' | 'branch.create' | 'repo.apply_patch' | 'test.run' | 'git.commit' | 'git.push' | 'github.pr.create';
   params: Record<string, any>;
   description: string;
 }

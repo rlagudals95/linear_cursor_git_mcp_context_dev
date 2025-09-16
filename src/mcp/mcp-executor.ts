@@ -124,6 +124,9 @@ export class MCPExecutor {
   private async executeCommand(command: ImperativeCommand): Promise<MCPToolResult> {
     try {
       switch (command.type) {
+        case 'repo.clone':
+          return await this.repoTool.executeTool('repo_clone', command.params);
+          
         case 'branch.create':
           return await this.repoTool.executeTool('branch_create', command.params);
           

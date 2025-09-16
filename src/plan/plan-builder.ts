@@ -11,34 +11,43 @@ export class PlanBuilder {
   };
 
   public async createPlan(issue: LinearIssue): Promise<ImperativePlan> {
-    logger.info('Creating imperative plan for issue', { issueId: issue.identifier });
+    try {
+      logger.info('Creating imperative plan for issue', { issueId: issue.identifier });
 
-    const branchName = this.generateBranchName(issue);
-    const commands = this.generateCommands(issue, branchName);
+      const branchName = this.generateBranchName(issue);
+      logger.info('Generated branch name', { issueId: issue.identifier, branchName });
+      
+      const commands = this.generateCommands(issue, branchName);
+      logger.info('Generated commands', { issueId: issue.identifier, commandCount: commands.length });
 
-    const plan: ImperativePlan = {
-      issueId: issue.identifier,
-      branchName,
-      commands
-    };
+      const plan: ImperativePlan = {
+        issueId: issue.identifier,
+        branchName,
+        commands
+      };
 
-    logger.info('Generated imperative plan', {
-      issueId: issue.identifier,
-      branchName,
-      commandCount: commands.length
-    });
+      logger.info('Generated imperative plan', {
+        issueId: issue.identifier,
+        branchName,
+        commandCount: commands.length
+      });
 
-    return plan;
+      return plan;
+    } catch (error) {
+      logger.error('💥 Error creating plan', {
+        issueId: issue.identifier,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      });
+      throw error;
+    }
   }
 
   private generateBranchName(issue: LinearIssue): string {
     // 라벨에서 브랜치 타입 결정
     const branchType = this.getBranchTypeFromLabels(issue.labels);
     
-    // 제목을 slug로 변환
-    const slug = this.titleToSlug(issue.title);
-    
-    return `${branchType}/${issue.identifier.toLowerCase()}-${slug}`;
+    return `${branchType}/${issue.identifier.toLowerCase()}`;
   }
 
   private getBranchTypeFromLabels(labels: Array<{ name: string }>): string {
@@ -51,35 +60,41 @@ export class PlanBuilder {
     return 'feat'; // 기본값
   }
 
-  private titleToSlug(title: string): string {
-    return title
-      .toLowerCase()
-      .replace(/[^a-z0-9가-힣\s-]/g, '') // 특수문자 제거 (한글 포함)
-      .replace(/\s+/g, '-') // 공백을 하이픈으로
-      .replace(/-+/g, '-') // 연속 하이픈 제거
-      .replace(/^-|-$/g, '') // 앞뒤 하이픈 제거
-      .substring(0, 50); // 길이 제한
-  }
-
   private generateCommands(issue: LinearIssue, branchName: string): ImperativeCommand[] {
     const commands: ImperativeCommand[] = [];
 
-    // 1. 브랜치 생성
+    // 1. 타겟 리포지토리 클론
+    const githubOwner = process.env.GITHUB_OWNER?.trim();
+    const githubRepo = process.env.GITHUB_REPO?.trim();
+    
+    if (githubOwner && githubRepo) {
+      commands.push({
+        id: 'clone-repo',
+        type: 'repo.clone',
+        params: {
+          url: `https://github.com/${githubOwner}/${githubRepo}.git`,
+          branch: 'develop'
+        },
+        description: `Clone target repository ${githubOwner}/${githubRepo}`
+      });
+    }
+
+    // 2. 브랜치 생성
     commands.push({
       id: 'create-branch',
       type: 'branch.create',
       params: {
         name: branchName,
-        from: 'main'
+        from: 'develop'
       },
       description: `브랜치 ${branchName} 생성`
     });
 
-    // 2. 코드 변경 적용
+    // 3. 코드 변경 적용
     const patchCommands = this.generatePatchCommands(issue);
     commands.push(...patchCommands);
 
-    // 3. 테스트 실행 (선택적)
+    // 4. 테스트 실행 (선택적)
     if (this.shouldRunTests(issue)) {
       commands.push({
         id: 'run-tests',
@@ -92,19 +107,19 @@ export class PlanBuilder {
       });
     }
 
-    // 4. 린팅 (선택적)
-    if (this.shouldRunLint(issue)) {
-      commands.push({
-        id: 'run-lint',
-        type: 'test.run',
-        params: {
-          command: 'npm run lint --fix'
-        },
-        description: '린팅 및 자동 수정'
-      });
-    }
+    // 5. 린팅 (선택적) - 현재 비활성화
+    // if (this.shouldRunLint(issue)) {
+    //   commands.push({
+    //     id: 'run-lint',
+    //     type: 'test.run',
+    //     params: {
+    //       command: 'npm run lint --fix'
+    //     },
+    //     description: '린팅 및 자동 수정'
+    //   });
+    // }
 
-    // 5. 파일 추가
+    // 6. 파일 추가
     commands.push({
       id: 'git-add',
       type: 'git.commit',
@@ -114,7 +129,7 @@ export class PlanBuilder {
       description: '변경된 파일들을 스테이징 영역에 추가'
     });
 
-    // 6. 커밋
+    // 7. 커밋
     commands.push({
       id: 'git-commit',
       type: 'git.commit',
@@ -124,7 +139,7 @@ export class PlanBuilder {
       description: '변경사항 커밋'
     });
 
-    // 7. 푸시
+    // 8. 푸시
     commands.push({
       id: 'git-push',
       type: 'git.push',
@@ -136,7 +151,7 @@ export class PlanBuilder {
       description: '원격 저장소에 푸시'
     });
 
-    // 8. PR 생성
+    // 9. PR 생성
     commands.push({
       id: 'create-pr',
       type: 'github.pr.create',
@@ -144,7 +159,7 @@ export class PlanBuilder {
         title: this.generatePRTitle(issue),
         body: this.generatePRBody(issue),
         head: branchName,
-        base: 'main',
+          base: 'develop',
         draft: this.shouldCreateDraftPR(issue),
         assignees: issue.assignee ? [issue.assignee.name] : [],
         labels: this.generatePRLabels(issue)
@@ -158,52 +173,23 @@ export class PlanBuilder {
   private generatePatchCommands(issue: LinearIssue): ImperativeCommand[] {
     const commands: ImperativeCommand[] = [];
 
-    // 이슈 설명에서 파일 변경 사항 추출 (간단한 예시)
-    const description = issue.description || '';
-    
-    // 기본적인 스캐폴딩 파일 생성
-    if (this.isNewFeature(issue)) {
-      commands.push({
-        id: 'create-feature-files',
-        type: 'repo.apply_patch',
-        params: {
-          files: this.generateFeatureFiles(issue)
-        },
-        description: '기능 파일들 생성'
-      });
-    }
-
-    // 버그 수정의 경우
-    if (this.isBugFix(issue)) {
-      commands.push({
-        id: 'apply-bug-fix',
-        type: 'repo.apply_patch',
-        params: {
-          files: this.generateBugFixFiles(issue)
-        },
-        description: '버그 수정 적용'
-      });
-    }
+    // 임시로 더미 파일 생성 (실제 AI 코드 생성 전까지)
+    commands.push({
+      id: 'create-task-file',
+      type: 'repo.apply_patch',
+      params: {
+        files: [{
+          path: `tasks/${issue.identifier.toLowerCase()}.md`,
+          content: this.generateTaskFile(issue),
+          operation: 'create'
+        }]
+      },
+      description: `태스크 파일 생성: ${issue.identifier}`
+    });
 
     return commands;
   }
 
-  private generateFeatureFiles(issue: LinearIssue): Array<{ path: string; content: string; operation: string }> {
-    const featureName = this.titleToSlug(issue.title).replace(/-/g, '');
-    
-    return [
-      {
-        path: `src/features/${featureName}/${featureName}.ts`,
-        content: this.generateFeatureTemplate(issue, featureName),
-        operation: 'create'
-      },
-      {
-        path: `src/features/${featureName}/${featureName}.test.ts`,
-        content: this.generateTestTemplate(issue, featureName),
-        operation: 'create'
-      }
-    ];
-  }
 
   private generateBugFixFiles(issue: LinearIssue): Array<{ path: string; content: string; operation: string }> {
     // 실제로는 이슈 설명에서 파일 경로를 파싱해야 함
@@ -266,7 +252,7 @@ describe('${this.capitalize(featureName)}', () => {
   }
 
   private generatePRTitle(issue: LinearIssue): string {
-    return `[${issue.identifier}] ${issue.title}`;
+    return `${issue.identifier}-${issue.id}`;
   }
 
   private generatePRBody(issue: LinearIssue): string {
@@ -351,5 +337,36 @@ ${issue.assignee ? `- Assignee: ${issue.assignee.name}` : ''}
 
   private capitalize(str: string): string {
     return str.charAt(0).toUpperCase() + str.slice(1);
+  }
+
+  private generateTaskFile(issue: LinearIssue): string {
+    return `# ${issue.title}
+
+## Issue Information
+- **ID**: ${issue.identifier}
+- **Team**: ${issue.team.name} (${issue.team.key})
+- **Status**: ${issue.status}
+- **Priority**: ${issue.priority || 'Not set'}
+- **Assignee**: ${issue.assignee?.name || 'Unassigned'}
+- **URL**: ${issue.url}
+
+## Description
+${issue.description || 'No description provided'}
+
+## Labels
+${issue.labels?.map(label => `- ${label.name}`).join('\n') || 'No labels'}
+
+## Comments
+${issue.comments?.map(comment => `
+### ${comment.user.name} (${comment.createdAt})
+${comment.body}
+`).join('\n') || 'No comments'}
+
+## Attachments
+${issue.attachments?.map(attachment => `- [${attachment.title}](${attachment.url})`).join('\n') || 'No attachments'}
+
+---
+*Generated by MCP Context Processor on ${new Date().toISOString()}*
+`;
   }
 }
