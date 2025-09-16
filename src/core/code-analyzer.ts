@@ -2,6 +2,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { LinearIssue } from '../types/index.js';
 import { logger } from '../utils/logger.js';
+import { ContextAnalysis, ContextAnalyzer, ContextualRequirement } from './context-analyzer.js';
 
 export interface CodeFile {
   path: string;
@@ -21,9 +22,11 @@ export interface CodeModification {
 
 export class CodeAnalyzer {
   private workDir: string;
+  private contextAnalyzer: ContextAnalyzer;
 
   constructor(workDir: string) {
     this.workDir = workDir;
+    this.contextAnalyzer = new ContextAnalyzer();
   }
 
   async analyzeRepository(): Promise<CodeFile[]> {
@@ -41,31 +44,33 @@ export class CodeAnalyzer {
   }
 
   async generateModifications(issue: LinearIssue, codeFiles: CodeFile[]): Promise<CodeModification[]> {
-    logger.info('🤖 Generating code modifications based on Linear issue');
+    logger.info('🤖 Generating contextual code modifications', {
+      issueId: issue.identifier,
+      commentsCount: issue.comments.length,
+      attachmentsCount: issue.attachments.length
+    });
     
-    const modifications: CodeModification[] = [];
+    // 1. 컨텍스트 분석 (댓글, 첨부파일, 관련 이슈 등 모든 정보 활용)
+    const contextAnalysis = this.contextAnalyzer.analyzeIssueContext(issue);
     
-    // 이슈 분석
-    const issueAnalysis = this.analyzeIssue(issue);
+    // 2. 관련 파일 찾기 (컨텍스트 기반)
+    const relevantFiles = this.findRelevantFiles(contextAnalysis, codeFiles);
     
-    // 관련 파일 찾기
-    const relevantFiles = this.findRelevantFiles(issueAnalysis, codeFiles);
+    // 3. 컨텍스트 기반 수정사항 생성
+    const modifications = await this.generateContextualModifications(
+      issue, 
+      contextAnalysis, 
+      relevantFiles, 
+      codeFiles
+    );
     
-    // 각 파일에 대한 수정사항 생성
-    for (const file of relevantFiles) {
-      const fileModifications = this.generateFileModifications(issue, issueAnalysis, file);
-      if (fileModifications.changes.length > 0) {
-        modifications.push(fileModifications);
-      }
-    }
-    
-    // 새 파일이 필요한 경우
-    const newFiles = this.generateNewFiles(issue, issueAnalysis, codeFiles);
-    modifications.push(...newFiles);
-    
-    logger.info('✅ Code modifications generated', {
+    logger.info('✅ Contextual code modifications generated', {
+      issueId: issue.identifier,
       modifiedFiles: modifications.length,
-      totalChanges: modifications.reduce((sum, mod) => sum + mod.changes.length, 0)
+      totalChanges: modifications.reduce((sum, mod) => sum + mod.changes.length, 0),
+      requirements: contextAnalysis.requirements.length,
+      technologies: contextAnalysis.technologies,
+      businessLogic: contextAnalysis.businessLogic.slice(0, 3)
     });
     
     return modifications;
@@ -247,7 +252,274 @@ export class CodeAnalyzer {
     return scopes;
   }
 
-  private findRelevantFiles(analysis: any, codeFiles: CodeFile[]): CodeFile[] {
+  private async generateContextualModifications(
+    issue: LinearIssue,
+    contextAnalysis: ContextAnalysis,
+    relevantFiles: CodeFile[],
+    allFiles: CodeFile[]
+  ): Promise<CodeModification[]> {
+    const modifications: CodeModification[] = [];
+    
+    // 1. 요구사항 기반 새 파일 생성
+    for (const requirement of contextAnalysis.requirements) {
+      const newFileModification = this.createFileFromRequirement(issue, requirement, contextAnalysis);
+      if (newFileModification) {
+        modifications.push(newFileModification);
+      }
+    }
+    
+    // 2. 기존 파일 수정 (컨텍스트 기반)
+    for (const file of relevantFiles) {
+      const fileModification = this.modifyExistingFile(issue, contextAnalysis, file);
+      if (fileModification.changes.length > 0) {
+        modifications.push(fileModification);
+      }
+    }
+    
+    // 3. 댓글에서 추출한 구체적인 요구사항 반영
+    const commentBasedModifications = this.generateCommentBasedModifications(issue, contextAnalysis);
+    modifications.push(...commentBasedModifications);
+    
+    return modifications;
+  }
+
+  private createFileFromRequirement(
+    issue: LinearIssue, 
+    requirement: ContextualRequirement,
+    contextAnalysis: ContextAnalysis
+  ): CodeModification | null {
+    const fileName = this.generateFileName(requirement);
+    
+    return {
+      file: fileName,
+      changes: [{
+        type: 'add',
+        location: 'file',
+        content: requirement.implementation,
+        reason: `Created ${requirement.type} based on Linear issue context: ${requirement.description}`
+      }]
+    };
+  }
+
+  private modifyExistingFile(
+    issue: LinearIssue,
+    contextAnalysis: ContextAnalysis,
+    file: CodeFile
+  ): CodeModification {
+    const changes = [];
+    
+    // 파일 상단에 컨텍스트 정보 추가
+    changes.push({
+      type: 'add' as const,
+      location: 'top',
+      content: this.generateContextualHeader(issue, contextAnalysis),
+      reason: 'Added contextual information from Linear issue'
+    });
+    
+    // 댓글에서 추출한 TODO 추가
+    const todos = this.extractTodosFromComments(issue.comments);
+    if (todos.length > 0) {
+      changes.push({
+        type: 'add' as const,
+        location: 'end',
+        content: `\n// TODOs from Linear comments:\n${todos.map(todo => `// TODO: ${todo}`).join('\n')}`,
+        reason: 'Added TODOs extracted from Linear comments'
+      });
+    }
+    
+    return {
+      file: file.path,
+      changes
+    };
+  }
+
+  private generateCommentBasedModifications(
+    issue: LinearIssue,
+    contextAnalysis: ContextAnalysis
+  ): CodeModification[] {
+    const modifications: CodeModification[] = [];
+    
+    // 댓글에서 코드 스니펫이나 구체적인 구현 요구사항 찾기
+    for (const comment of issue.comments) {
+      const codeSnippets = this.extractCodeSnippets(comment.body);
+      const implementationRequests = this.extractImplementationRequests(comment.body);
+      
+      if (codeSnippets.length > 0 || implementationRequests.length > 0) {
+        modifications.push({
+          file: `src/implementations/${issue.identifier.toLowerCase()}-from-comments.ts`,
+          changes: [{
+            type: 'add',
+            location: 'file',
+            content: this.generateImplementationFromComments(issue, comment, codeSnippets, implementationRequests),
+            reason: `Implementation based on comment from ${comment.user.name}`
+          }]
+        });
+      }
+    }
+    
+    return modifications;
+  }
+
+  private generateContextualHeader(issue: LinearIssue, contextAnalysis: ContextAnalysis): string {
+    return `/**
+ * ${issue.title}
+ * Linear Issue: ${issue.identifier}
+ * ${issue.url}
+ * 
+ * Context Analysis:
+ * - Technologies: ${contextAnalysis.technologies.join(', ')}
+ * - Business Logic: ${contextAnalysis.businessLogic.slice(0, 3).join(', ')}
+ * - Priority: ${issue.priority}/4
+ * - Comments: ${issue.comments.length}
+ * - Attachments: ${issue.attachments.length}
+ * 
+ * Generated: ${new Date().toISOString()}
+ */`;
+  }
+
+  private extractTodosFromComments(comments: LinearIssue['comments']): string[] {
+    const todos: string[] = [];
+    
+    for (const comment of comments) {
+      // TODO 패턴 찾기
+      const todoMatches = comment.body.match(/(?:TODO|todo|할일|해야할것|구현해야|추가해야)[:：]\s*(.+)/gi);
+      if (todoMatches) {
+        todos.push(...todoMatches.map(match => 
+          match.replace(/(?:TODO|todo|할일|해야할것|구현해야|추가해야)[:：]\s*/i, '').trim()
+        ));
+      }
+      
+      // 체크리스트 패턴
+      const checklistMatches = comment.body.match(/- \[ \]\s*(.+)/g);
+      if (checklistMatches) {
+        todos.push(...checklistMatches.map(match => 
+          match.replace(/- \[ \]\s*/, '').trim()
+        ));
+      }
+    }
+    
+    return todos;
+  }
+
+  private extractCodeSnippets(commentBody: string): string[] {
+    const snippets: string[] = [];
+    
+    // 코드 블록 패턴 (```로 감싸진)
+    const codeBlockMatches = commentBody.match(/```[\s\S]*?```/g);
+    if (codeBlockMatches) {
+      snippets.push(...codeBlockMatches.map(match => 
+        match.replace(/```\w*\n?/, '').replace(/```$/, '').trim()
+      ));
+    }
+    
+    // 인라인 코드 패턴 (`로 감싸진)
+    const inlineCodeMatches = commentBody.match(/`([^`]+)`/g);
+    if (inlineCodeMatches) {
+      snippets.push(...inlineCodeMatches.map(match => 
+        match.replace(/`/g, '').trim()
+      ));
+    }
+    
+    return snippets;
+  }
+
+  private extractImplementationRequests(commentBody: string): string[] {
+    const requests: string[] = [];
+    
+    // 구현 요청 패턴
+    const implementationPatterns = [
+      /구현해[주줘]/g,
+      /만들어[주줘]/g,
+      /추가해[주줘]/g,
+      /수정해[주줘]/g,
+      /implement\s+/gi,
+      /create\s+/gi,
+      /add\s+/gi,
+      /modify\s+/gi
+    ];
+    
+    for (const pattern of implementationPatterns) {
+      const matches = commentBody.match(pattern);
+      if (matches) {
+        // 해당 문장 전체 추출
+        const sentences = commentBody.split(/[.!?。！？]/);
+        for (const sentence of sentences) {
+          if (pattern.test(sentence)) {
+            requests.push(sentence.trim());
+          }
+        }
+      }
+    }
+    
+    return requests;
+  }
+
+  private generateImplementationFromComments(
+    issue: LinearIssue,
+    comment: LinearIssue['comments'][0],
+    codeSnippets: string[],
+    implementationRequests: string[]
+  ): string {
+    return `/**
+ * Implementation based on comment from ${comment.user.name}
+ * Comment Date: ${comment.createdAt}
+ * Linear Issue: ${issue.identifier}
+ */
+
+${codeSnippets.length > 0 ? `
+// Code snippets from comment:
+${codeSnippets.map((snippet, index) => `
+/*
+Snippet ${index + 1}:
+${snippet}
+*/`).join('\n')}
+` : ''}
+
+${implementationRequests.length > 0 ? `
+// Implementation requests:
+${implementationRequests.map((request, index) => `
+// Request ${index + 1}: ${request}
+export function handleRequest${index + 1}() {
+  // TODO: Implement: ${request}
+  console.log('Processing: ${request}');
+}`).join('\n')}
+` : ''}
+
+// Main implementation based on comment context
+export function ${this.toCamelCase(issue.title)}FromComment() {
+  console.log('Implementation based on comment from ${comment.user.name}');
+  
+  // Original comment:
+  // ${comment.body.substring(0, 200)}${comment.body.length > 200 ? '...' : ''}
+  
+  return {
+    success: true,
+    source: 'linear_comment',
+    commentId: '${comment.id}',
+    author: '${comment.user.name}'
+  };
+}`;
+  }
+
+  private generateFileName(requirement: ContextualRequirement): string {
+    const typeMap = {
+      'function': 'functions',
+      'class': 'classes', 
+      'component': 'components',
+      'api': 'api',
+      'test': 'tests',
+      'config': 'config',
+      'style': 'styles'
+    };
+    
+    const dir = typeMap[requirement.type] || 'misc';
+    const fileName = this.toKebabCase(requirement.name);
+    const ext = requirement.type === 'component' ? 'tsx' : 'ts';
+    
+    return `src/${dir}/${fileName}.${ext}`;
+  }
+
+  private findRelevantFiles(contextAnalysis: ContextAnalysis, codeFiles: CodeFile[]): CodeFile[] {
     const relevantFiles: CodeFile[] = [];
     
     for (const file of codeFiles) {
@@ -540,5 +812,14 @@ describe('${className}', () => {
   private toPascalCase(str: string): string {
     const camel = this.toCamelCase(str);
     return camel.charAt(0).toUpperCase() + camel.slice(1);
+  }
+
+  private toKebabCase(str: string): string {
+    return str
+      .replace(/([a-z])([A-Z])/g, '$1-$2')
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
   }
 }
