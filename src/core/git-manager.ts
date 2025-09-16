@@ -16,6 +16,10 @@ export class GitManager {
     this.git = simpleGit();
   }
 
+  getWorkDir(): string {
+    return this.workDir;
+  }
+
   async setupRepository(): Promise<void> {
     logger.info('🔧 Setting up repository', { 
       owner: this.config.owner, 
@@ -46,6 +50,23 @@ export class GitManager {
       await this.git.checkout('develop');
     } catch {
       await this.git.checkout('main');
+    }
+
+    // 기존 브랜치가 있으면 삭제
+    try {
+      // 로컬 브랜치 삭제
+      await this.git.deleteLocalBranch(branchName, true);
+      logger.info('🗑️ Deleted existing local branch', { branchName });
+    } catch {
+      // 브랜치가 없으면 무시
+    }
+
+    try {
+      // 원격 브랜치 삭제
+      await this.git.push('origin', `:${branchName}`);
+      logger.info('🗑️ Deleted existing remote branch', { branchName });
+    } catch {
+      // 원격 브랜치가 없으면 무시
     }
 
     // 새 브랜치 생성 및 체크아웃

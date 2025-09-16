@@ -7,15 +7,15 @@ import { PRCreator } from './pr-creator.js';
 
 export class LinearPipeline {
   private linearClient: LinearClient;
-  private codeGenerator: CodeGenerator;
+  private codeGenerator!: CodeGenerator;
   private gitManager: GitManager;
   private prCreator: PRCreator;
 
   constructor(linearApiKey: string, gitConfig: GitConfig) {
     this.linearClient = new LinearClient(linearApiKey);
-    this.codeGenerator = new CodeGenerator();
     this.gitManager = new GitManager(gitConfig);
     this.prCreator = new PRCreator(gitConfig);
+    // CodeGenerator will be initialized later with workDir
   }
 
   async execute(issueIdentifier: string): Promise<PipelineResult> {
@@ -38,33 +38,29 @@ export class LinearPipeline {
       
       logs.push(`✅ Fetched Linear issue: ${issue.title}`);
 
-      // 2. 코드 생성
-      logger.info('🤖 Step 2: Generating code');
-      const generatedFiles = this.codeGenerator.generateFiles(issue);
-      logs.push(`✅ Generated ${generatedFiles.length} files`);
-
-      // 3. Git 리포지토리 설정
-      logger.info('🔧 Step 3: Setting up repository');
+      // 2. Git 리포지토리 설정 (코드 분석 전에 필요)
+      logger.info('🔧 Step 2: Setting up repository');
       await this.gitManager.setupRepository();
       logs.push('✅ Repository setup complete');
+
+      // 3. 스마트 코드 수정
+      logger.info('🤖 Step 3: Analyzing and modifying code');
+      this.codeGenerator = new CodeGenerator(this.gitManager.getWorkDir());
+      await this.codeGenerator.generateSmartModifications(issue);
+      logs.push('✅ Smart code modifications applied');
 
       // 4. 브랜치 생성
       logger.info('🌿 Step 4: Creating branch');
       branchName = await this.gitManager.createBranch(issue);
       logs.push(`✅ Created branch: ${branchName}`);
 
-      // 5. 파일 작성
-      logger.info('📝 Step 5: Writing files');
-      await this.gitManager.writeFiles(generatedFiles);
-      logs.push('✅ Files written to repository');
-
-      // 6. 커밋 및 푸시
-      logger.info('💾 Step 6: Committing and pushing');
+      // 5. 커밋 및 푸시 (파일은 이미 수정됨)
+      logger.info('💾 Step 5: Committing and pushing');
       commitHash = await this.gitManager.commitAndPush(issue, branchName);
       logs.push(`✅ Committed and pushed: ${commitHash}`);
 
-      // 7. PR 생성
-      logger.info('🔗 Step 7: Creating pull request');
+      // 6. PR 생성
+      logger.info('🔗 Step 6: Creating pull request');
       prUrl = await this.prCreator.createPR(issue, branchName);
       logs.push(`✅ Pull request created: ${prUrl}`);
 

@@ -1,5 +1,7 @@
 import { LinearIssue } from '../types/index.js';
 import { logger } from '../utils/logger.js';
+import { CodeAnalyzer } from './code-analyzer.js';
+import { CodeModifier } from './code-modifier.js';
 
 export interface GeneratedFile {
   path: string;
@@ -7,6 +9,34 @@ export interface GeneratedFile {
 }
 
 export class CodeGenerator {
+  private analyzer: CodeAnalyzer;
+  private modifier: CodeModifier;
+  private workDir: string;
+
+  constructor(workDir: string) {
+    this.workDir = workDir;
+    this.analyzer = new CodeAnalyzer(workDir);
+    this.modifier = new CodeModifier(workDir);
+  }
+
+  async generateSmartModifications(issue: LinearIssue): Promise<void> {
+    logger.info('🤖 Generating smart code modifications', { issueId: issue.identifier });
+
+    // 1. 기존 코드베이스 분석
+    const codeFiles = await this.analyzer.analyzeRepository();
+    
+    // 2. 이슈 기반 수정사항 생성
+    const modifications = await this.analyzer.generateModifications(issue, codeFiles);
+    
+    // 3. 수정사항 적용
+    await this.modifier.applyModifications(modifications);
+    
+    logger.info('✅ Smart code modifications completed', {
+      issueId: issue.identifier,
+      modifiedFiles: modifications.length
+    });
+  }
+
   generateFiles(issue: LinearIssue): GeneratedFile[] {
     logger.info('🤖 Generating code files', { issueId: issue.identifier });
 
