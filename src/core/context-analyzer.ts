@@ -18,6 +18,7 @@ export interface ContextAnalysis {
   businessLogic: string[];
   userStories: string[];
   acceptanceCriteria: string[];
+  keywords: string[];
 }
 
 export class ContextAnalyzer {
@@ -30,6 +31,9 @@ export class ContextAnalyzer {
 
     // 모든 텍스트 컨텍스트 수집
     const allText = this.collectAllText(issue);
+    
+    // 키워드 추출
+    const keywords = this.extractKeywords(allText);
     
     // 기술 스택 분석
     const technologies = this.extractTechnologies(allText);
@@ -48,6 +52,7 @@ export class ContextAnalyzer {
     
     // 구체적인 요구사항 생성
     const requirements = this.generateRequirements(issue, {
+      keywords,
       technologies,
       patterns,
       businessLogic,
@@ -57,6 +62,7 @@ export class ContextAnalyzer {
 
     const analysis: ContextAnalysis = {
       requirements,
+      keywords,
       technologies,
       patterns,
       businessLogic,
@@ -83,6 +89,21 @@ export class ContextAnalyzer {
     ];
     
     return texts.join('\n').toLowerCase();
+  }
+
+  private extractKeywords(text: string): string[] {
+    const words = text.match(/\b[a-z가-힣]{3,}\b/g) || [];
+    const stopWords = new Set([
+      'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 
+      'her', 'was', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 
+      'how', 'its', 'may', 'new', 'now', 'old', 'see', 'two', 'who', 'boy', 
+      'did', 'she', 'use', 'way', 'will', '있다', '없다', '하다', '이다', '되다',
+      '그리고', '하지만', '그러나', '따라서', '위해', '대한', '같은', '등'
+    ]);
+    
+    return [...new Set(words)]
+      .filter(word => !stopWords.has(word) && word.length >= 3)
+      .slice(0, 20); // 상위 20개만
   }
 
   private extractTechnologies(text: string): string[] {

@@ -2,6 +2,7 @@ import { LinearIssue } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 import { CodeAnalyzer } from './code-analyzer.js';
 import { CodeModifier } from './code-modifier.js';
+import { HybridCodeGenerator } from './hybrid-code-generator.js';
 
 export interface GeneratedFile {
   path: string;
@@ -11,30 +12,121 @@ export interface GeneratedFile {
 export class CodeGenerator {
   private analyzer: CodeAnalyzer;
   private modifier: CodeModifier;
+  private hybridGenerator: HybridCodeGenerator;
   private workDir: string;
 
   constructor(workDir: string) {
     this.workDir = workDir;
     this.analyzer = new CodeAnalyzer(workDir);
     this.modifier = new CodeModifier(workDir);
+    this.hybridGenerator = new HybridCodeGenerator(workDir);
   }
 
   async generateSmartModifications(issue: LinearIssue): Promise<void> {
-    logger.info('🤖 Generating smart code modifications', { issueId: issue.identifier });
+    logger.info('🚀 Starting HYBRID code generation', { 
+      issueId: issue.identifier,
+      title: issue.title,
+      hasAI: !!process.env.OPENAI_API_KEY
+    });
 
-    // 1. 기존 코드베이스 분석
-    const codeFiles = await this.analyzer.analyzeRepository();
+    try {
+      // 1. 하이브리드 코드 생성 (패턴 + AI)
+      const implementations = await this.hybridGenerator.generateCode(issue);
+      
+      // 2. 구현을 수정사항으로 변환
+      const modifications = implementations.map(impl => ({
+        file: impl.path,
+        changes: [{
+          type: 'add' as const,
+          location: 'file',
+          content: impl.content,
+          reason: `${impl.aiGenerated ? 'AI-enhanced' : 'Pattern-based'} ${impl.type}: ${impl.path}`
+        }]
+      }));
+      
+      // 3. 기존 파일 분석 및 컨텍스트 추가 (선택적)
+      const codeFiles = await this.analyzer.analyzeRepository();
+      if (codeFiles.length > 0) {
+        const contextModifications = await this.analyzer.generateModifications(issue, codeFiles);
+        // 타입 호환성을 위해 add 타입만 필터링
+        const compatibleMods = contextModifications.map(mod => ({
+          file: mod.file,
+          changes: mod.changes.filter((change): change is { type: 'add'; location: string; content: string; reason: string } => 
+            change.type === 'add'
+          )
+        })).filter(mod => mod.changes.length > 0);
+        modifications.push(...compatibleMods.slice(0, 3));
+      }
+      
+      // 4. 모든 수정사항 적용
+      await this.modifier.applyModifications(modifications);
+      
+      logger.info('✅ HYBRID implementation completed', {
+        issueId: issue.identifier,
+        totalFiles: implementations.length,
+        aiEnhanced: implementations.filter(impl => impl.aiGenerated).length,
+        patternBased: implementations.filter(impl => !impl.aiGenerated).length,
+        dependencies: [...new Set(implementations.flatMap(impl => impl.dependencies))]
+      });
+
+    } catch (error) {
+      logger.error('❌ Hybrid generation failed, falling back to basic implementation', {
+        issueId: issue.identifier,
+        error: error instanceof Error ? error.message : error
+      });
+      
+      // 폴백: 기본 구현
+      await this.generateFallbackImplementation(issue);
+    }
+  }
+
+  private async generateFallbackImplementation(issue: LinearIssue): Promise<void> {
+    const fallbackContent = `/**
+ * Fallback implementation for ${issue.title}
+ * Linear Issue: ${issue.identifier}
+ * Generated when hybrid generation failed
+ */
+
+export const ${this.toCamelCase(issue.title)} = {
+  execute: async () => {
+    console.log('Executing fallback implementation for: ${issue.title}');
     
-    // 2. 이슈 기반 수정사항 생성
-    const modifications = await this.analyzer.generateModifications(issue, codeFiles);
-    
-    // 3. 수정사항 적용
+    // Basic implementation based on issue title
+    return {
+      success: true,
+      message: 'Fallback implementation executed',
+      issueId: '${issue.identifier}',
+      timestamp: new Date().toISOString()
+    };
+  }
+};
+
+export default ${this.toCamelCase(issue.title)};`;
+
+    const modifications = [{
+      file: `src/fallback/${issue.identifier.toLowerCase()}.ts`,
+      changes: [{
+        type: 'add' as const,
+        location: 'file',
+        content: fallbackContent,
+        reason: 'Fallback implementation when hybrid generation fails'
+      }]
+    }];
+
     await this.modifier.applyModifications(modifications);
     
-    logger.info('✅ Smart code modifications completed', {
-      issueId: issue.identifier,
-      modifiedFiles: modifications.length
-    });
+    logger.info('✅ Fallback implementation completed', { issueId: issue.identifier });
+  }
+
+  private toCamelCase(str: string): string {
+    return str
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '')
+      .split(' ')
+      .map((word, index) => 
+        index === 0 ? word : word.charAt(0).toUpperCase() + word.slice(1)
+      )
+      .join('');
   }
 
   generateFiles(issue: LinearIssue): GeneratedFile[] {
@@ -286,8 +378,5 @@ export default ${this.toCamelCase(fileName)};
       .join('');
   }
 
-  private toCamelCase(str: string): string {
-    const pascal = this.toPascalCase(str);
-    return pascal.charAt(0).toLowerCase() + pascal.slice(1);
-  }
+
 }

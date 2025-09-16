@@ -526,22 +526,22 @@ export function ${this.toCamelCase(issue.title)}FromComment() {
       let relevanceScore = 0;
       
       // 파일명 매칭
-      analysis.keywords.forEach((keyword: string) => {
+      contextAnalysis.keywords.forEach((keyword: string) => {
         if (file.path.toLowerCase().includes(keyword)) {
           relevanceScore += 3;
         }
       });
       
-      // 컴포넌트명 매칭
-      analysis.components.forEach((component: string) => {
-        if (file.path.toLowerCase().includes(component) || 
-            file.content.toLowerCase().includes(component)) {
+      // 기술 스택 매칭
+      contextAnalysis.technologies.forEach((tech: string) => {
+        if (file.path.toLowerCase().includes(tech) || 
+            file.content.toLowerCase().includes(tech)) {
           relevanceScore += 5;
         }
       });
       
       // 내용 매칭
-      analysis.keywords.forEach((keyword: string) => {
+      contextAnalysis.keywords.forEach((keyword: string) => {
         const matches = (file.content.toLowerCase().match(new RegExp(keyword, 'g')) || []).length;
         relevanceScore += matches;
       });
