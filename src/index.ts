@@ -1,62 +1,53 @@
 import dotenv from 'dotenv';
-import { promises as fs } from 'fs';
+import { APIServer } from './api/server.js';
 import { logger } from './utils/logger.js';
-import { LinearWebhookHandler } from './webhook/linear-webhook.js';
 
 // 환경 변수 로드
 dotenv.config();
 
 async function main() {
   try {
+    logger.info('🚀 Starting Linear Pipeline Service');
+
     // 필수 환경 변수 확인
     const requiredEnvVars = [
       'LINEAR_API_KEY',
-      'LINEAR_WEBHOOK_SECRET',
-      'GITHUB_TOKEN',
+      'GITHUB_TOKEN', 
       'GITHUB_OWNER',
       'GITHUB_REPO'
     ];
 
     const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+    
     if (missingVars.length > 0) {
-      throw new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
+      logger.error('Missing required environment variables', { missingVars });
+      process.exit(1);
     }
 
-    // 로그 디렉토리 생성
-    await fs.mkdir('logs', { recursive: true });
-
-    // 워크스페이스 디렉토리 생성
-    await fs.mkdir('workspace', { recursive: true });
-
-    // Linear Webhook 핸들러 초기화
-    const webhookHandler = new LinearWebhookHandler(process.env.LINEAR_WEBHOOK_SECRET!);
-    const app = webhookHandler.getApp();
-
-    // 서버 시작
-    const port = process.env.PORT || 3000;
-    app.listen(port, () => {
-      logger.info('MCP Context Processor started', {
-        port,
-        nodeEnv: process.env.NODE_ENV,
-        timestamp: new Date().toISOString()
-      });
-    });
-
-    // Graceful shutdown
-    process.on('SIGTERM', () => {
-      logger.info('SIGTERM received, shutting down gracefully');
-      process.exit(0);
-    });
-
-    process.on('SIGINT', () => {
-      logger.info('SIGINT received, shutting down gracefully');
-      process.exit(0);
-    });
+    // API 서버 시작
+    const server = new APIServer();
+    const port = parseInt(process.env.PORT || '3008');
+    
+    server.start(port);
 
   } catch (error) {
-    logger.error('Failed to start application', { error });
+    logger.error('Failed to start service', { error });
     process.exit(1);
   }
 }
 
-main();
+// 프로세스 종료 시 정리
+process.on('SIGINT', () => {
+  logger.info('👋 Shutting down gracefully');
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  logger.info('👋 Shutting down gracefully');
+  process.exit(0);
+});
+
+main().catch((error) => {
+  logger.error('Unhandled error', { error });
+  process.exit(1);
+});

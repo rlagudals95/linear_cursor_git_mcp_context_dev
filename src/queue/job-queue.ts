@@ -41,7 +41,7 @@ jobQueue.process('process-linear-issue', async (job) => {
 
     // 2. MCP Executor로 계획 실행
     const executor = new MCPExecutor();
-    const result = await executor.executePlan(plan);
+    const result = await executor.executePlan(plan, issue);
     
     if (result.success) {
       logger.info('Successfully executed plan', {

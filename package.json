@@ -11,12 +11,8 @@
     "test": "jest",
     "lint": "eslint src/**/*.ts",
     "format": "prettier --write src/**/*.ts",
-    "trigger": "tsx src/scripts/trigger-task.ts",
-    "trigger:force": "tsx -e \"import('./src/scripts/trigger-task.js').then(m => m.triggerTask(process.argv[2], {force: true}))\"",
-    "process": "tsx src/scripts/process-issue.ts",
-    "status": "tsx src/scripts/check-status.ts",
-    "mcp:start": "node dist/mcp-server.js",
-    "webhook:test": "tsx src/scripts/test-webhook.ts"
+    "trigger": "curl -X POST http://localhost:3008/trigger/FE-1140",
+    "test:api": "curl http://localhost:3008/test/FE-1140"
   },
   "keywords": ["mcp", "linear", "git", "cursor", "automation"],
   "author": "김형민",

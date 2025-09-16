@@ -1,5 +1,7 @@
+import path from 'path';
 import { ImperativeCommand, ImperativePlan, MCPToolResult } from '../types/index.js';
 import { logger } from '../utils/logger.js';
+import { PipelineValidator } from '../validation/pipeline-validator.js';
 import { GitTool } from './tools/git-tool.js';
 import { GitHubTool } from './tools/github-tool.js';
 import { RepoTool } from './tools/repo-tool.js';
@@ -10,13 +12,20 @@ export class MCPExecutor {
   private gitTool: GitTool;
   private githubTool: GitHubTool;
   private testTool: TestTool;
+  private validator: PipelineValidator;
   private workspaceDir: string;
 
-  constructor(workspaceDir: string = './workspace') {
-    this.workspaceDir = workspaceDir;
-    this.repoTool = new RepoTool(workspaceDir);
-    this.gitTool = new GitTool(workspaceDir);
-    this.testTool = new TestTool(workspaceDir);
+  constructor(workspaceDir?: string) {
+    // 임시 디렉토리 생성 (현재 프로젝트와 완전 분리)
+    this.workspaceDir = workspaceDir || `/tmp/mcp-workspace-${Date.now()}`;
+    logger.info('🏗️ MCP Executor initialized', { 
+      workspaceDir: this.workspaceDir,
+      absolutePath: path.resolve(this.workspaceDir)
+    });
+    this.repoTool = new RepoTool(this.workspaceDir);
+    this.gitTool = new GitTool(this.workspaceDir);
+    this.testTool = new TestTool(this.workspaceDir);
+    this.validator = new PipelineValidator(this.workspaceDir);
     
     // GitHub 설정
     const githubToken = process.env.GITHUB_TOKEN;
@@ -30,7 +39,7 @@ export class MCPExecutor {
     this.githubTool = new GitHubTool(githubToken, githubOwner, githubRepo);
   }
 
-  public async executePlan(plan: ImperativePlan): Promise<MCPToolResult> {
+  public async executePlan(plan: ImperativePlan, issue?: any): Promise<MCPToolResult> {
     logger.info('Starting plan execution', {
       issueId: plan.issueId,
       branchName: plan.branchName,
@@ -101,12 +110,39 @@ export class MCPExecutor {
         executedCommands: executionResults.length
       });
 
+      // 파이프라인 검증 실행
+      if (issue) {
+        logger.info('🔍 Starting pipeline validation...');
+        const validationReport = await this.validator.validatePipeline(issue, executionResults);
+        
+        logger.info('📊 Pipeline validation results', {
+          overallSuccess: validationReport.overallSuccess,
+          overallScore: validationReport.overallScore,
+          stepsValidated: validationReport.steps.length
+        });
+
+        // 검증 결과를 최종 결과에 포함
+        finalResult.data.validation = validationReport;
+        
+        // 검증 실패 시 전체 성공 상태 업데이트
+        if (!validationReport.overallSuccess) {
+          finalResult.success = false;
+          finalResult.error = `Pipeline validation failed: ${validationReport.summary}`;
+        }
+      }
+
+      // 작업 완료 후 임시 디렉토리 정리
+      await this.cleanup();
+      
       return finalResult;
     } catch (error) {
       logger.error('Plan execution failed with exception', {
         issueId: plan.issueId,
         error
       });
+      
+      // 에러 발생 시에도 정리
+      await this.cleanup();
 
       return {
         success: false,
@@ -123,6 +159,13 @@ export class MCPExecutor {
 
   private async executeCommand(command: ImperativeCommand): Promise<MCPToolResult> {
     try {
+      logger.info('🎯 Executing command', { 
+        commandId: command.id,
+        type: command.type,
+        workspaceDir: this.workspaceDir,
+        absolutePath: path.resolve(this.workspaceDir)
+      });
+      
       switch (command.type) {
         case 'repo.clone':
           return await this.repoTool.executeTool('repo_clone', command.params);
@@ -225,6 +268,20 @@ export class MCPExecutor {
         success: false,
         error: `Rollback failed: ${error}`
       };
+    }
+  }
+
+  // 임시 디렉토리 정리
+  private async cleanup(): Promise<void> {
+    try {
+      // /tmp로 시작하는 임시 디렉토리만 삭제 (안전장치)
+      if (this.workspaceDir.startsWith('/tmp/mcp-workspace-')) {
+        const fs = await import('fs');
+        await fs.promises.rm(this.workspaceDir, { recursive: true, force: true });
+        logger.info('🧹 Cleaned up temporary workspace', { workspaceDir: this.workspaceDir });
+      }
+    } catch (error) {
+      logger.warn('Failed to cleanup workspace', { workspaceDir: this.workspaceDir, error });
     }
   }
 }
